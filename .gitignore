@@ -1,1 +1,197 @@
+# ============================================
+# Environment Variables
+# ============================================
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+
+# ============================================
+# Dependencies
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Note: Lock files (package-lock.json, yarn.lock, pnpm-lock.yaml) 
+# should be COMMITTED to ensure reproducible builds
+
+# Yarn PnP (if using Yarn PnP)
+.pnp/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# ============================================
+# Next.js / Frontend
+# ============================================
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/.vercel/
+frontend/.swc/
+
+# Next.js cache
+frontend/.next/cache/
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# ============================================
+# Testing
+# ============================================
+coverage/
+.nyc_output/
+*.test.js.snap
+.jest/
+__tests__/coverage/
+
+# ============================================
+# Database Files (lowdb - development only)
+# ============================================
+server/data/
+*.db.json
+data/
+*.json.bak
+
+# ============================================
+# Logs
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ============================================
+# Operating System Files
+# ============================================
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# ============================================
+# IDE / Editor Files
+# ============================================
+# VSCode
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IntelliJ / WebStorm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================
+# Temporary Files
+# ============================================
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+*.bak
+*.backup
+
+# ============================================
+# Build Outputs
+# ============================================
+dist/
+build/
+*.min.js
+*.min.css
+*.map
+
+# ============================================
+# Sui / Blockchain
+# ============================================
+.sui/
+*.key
+*.keypair
+wallet.json
+*.wallet
+sui.keystore
+
+# ============================================
+# Walrus
+# ============================================
+*.blob
+*.blobid
+walrus-cache/
+.walrus/
+
+# ============================================
+# Test Files (development)
+# ============================================
+test.txt
+test-*.txt
+*.test-file
+test-data/
+
+# ============================================
+# Misc
+# ============================================
+*.pid
+*.seed
+*.pid.lock
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache/
+
+# ============================================
+# Deployment
+# ============================================
+.vercel/
+.netlify/
+.serverless/
+
+# ============================================
+# Security / Certificates
+# ============================================
+*.pem
+*.key
+*.crt
+*.cert

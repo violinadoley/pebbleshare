@@ -1,0 +1,10 @@
+{
+  "ignore": [
+    "data/**/*",
+    "*.log",
+    "node_modules/**/*"
+  ],
+  "watch": [
+    "src/**/*.js"
+  ]
+}

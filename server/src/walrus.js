@@ -1,6 +1,40 @@
 const axios = require('axios');
 const config = require('./config');
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Find walrus binary path
+function getWalrusPath() {
+  try {
+    // Try to find walrus in PATH (including ~/.local/bin)
+    const whichOutput = execSync('which walrus', { 
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}` }
+    }).trim();
+    if (whichOutput) return whichOutput;
+  } catch (e) {
+    // Fallback to common locations
+  }
+  
+  // Common installation paths
+  const commonPaths = [
+    path.join(process.env.HOME, '.local', 'bin', 'walrus'),
+    '/usr/local/bin/walrus',
+    '/opt/homebrew/bin/walrus',
+    'walrus' // Last resort
+  ];
+  
+  for (const walrusPath of commonPaths) {
+    if (walrusPath === 'walrus' || fs.existsSync(walrusPath)) {
+      return walrusPath;
+    }
+  }
+  
+  return 'walrus'; // Last resort
+}
+
+const WALRUS_BIN = getWalrusPath();
 
 /**
  * Upload ciphertext to Walrus.
@@ -18,33 +52,62 @@ async function uploadCiphertextToWalrus(buffer, filename, epochs = 2) {
     // Option 1: Try Walrus CLI if available (preferred for production)
     try {
       const tempFile = `/tmp/walrus_upload_${Date.now()}_${filename}`;
-      require('fs').writeFileSync(tempFile, buffer);
+      fs.writeFileSync(tempFile, buffer);
       
       const context = process.env.WALRUS_CONTEXT || 'testnet';
       const epochsFlag = epochs ? `--epochs ${epochs}` : '';
       
+      console.log('Attempting walrus upload:', {
+        walrusBin: WALRUS_BIN,
+        tempFile,
+        context,
+        epochs
+      });
+      
       const output = execSync(
-        `walrus store "${tempFile}" ${epochsFlag} --context ${context}`,
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+        `"${WALRUS_BIN}" store "${tempFile}" ${epochsFlag} --context ${context}`,
+        { 
+          encoding: 'utf8', 
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}` }
+        }
       );
       
       // Clean up temp file
-      require('fs').unlinkSync(tempFile);
+      fs.unlinkSync(tempFile);
+      
+      console.log('Walrus CLI output:', output);
       
       // Parse blob ID from output (format may vary)
-      const blobIdMatch = output.match(/blob[_-]?id[:\s]+([a-zA-Z0-9_-]+)/i) || 
-                         output.match(/([a-zA-Z0-9]{32,})/);
+      // Try multiple patterns to match different output formats
+      const blobIdMatch = 
+        output.match(/blob[_-]?id[:\s]+([a-zA-Z0-9_-]+)/i) || 
+        output.match(/blob[_-]?id[:\s]+([a-f0-9]{64})/i) ||
+        output.match(/id[:\s]+([a-zA-Z0-9_-]{32,})/i) ||
+        output.match(/([a-f0-9]{64})/) ||
+        output.match(/([a-zA-Z0-9]{32,})/);
       
       if (blobIdMatch && blobIdMatch[1]) {
+        console.log('Parsed blob ID:', blobIdMatch[1]);
         return {
           blobId: blobIdMatch[1],
           method: 'cli',
           rawOutput: output
         };
+      } else {
+        console.warn('Could not parse blob ID from walrus output:', output);
+        throw new Error('Failed to parse blob ID from walrus output');
       }
     } catch (cliError) {
       // CLI not available or failed, fall back to HTTP API
-      console.debug('Walrus CLI not available, using HTTP API:', cliError.message);
+      console.error('Walrus CLI error:', {
+        message: cliError.message,
+        code: cliError.code,
+        signal: cliError.signal,
+        stderr: cliError.stderr?.toString(),
+        stdout: cliError.stdout?.toString(),
+        walrusBin: WALRUS_BIN
+      });
     }
 
     // Option 2: HTTP API fallback
@@ -80,17 +143,7 @@ async function uploadCiphertextToWalrus(buffer, filename, epochs = 2) {
       };
     }
 
-    // Fallback: generate a mock blob ID (for testing only)
-    if (config.nodeEnv === 'development') {
-      console.warn('Using mock blob ID - configure Walrus API or CLI for production');
-      const { nanoid } = require('nanoid');
-      return {
-        blobId: nanoid(),
-        method: 'mock',
-        warning: 'Mock blob ID - not for production'
-      };
-    }
-
+    // No mock fallback - throw error if not configured
     throw new Error('Walrus integration not configured. Set WALRUS_API_URL or install walrus CLI.');
   } catch (err) {
     console.error('uploadCiphertextToWalrus error:', err);
@@ -107,27 +160,11 @@ async function uploadCiphertextToWalrus(buffer, filename, epochs = 2) {
  */
 async function getSignedFetchUrl(blobId, expiresSec = 60) {
   try {
-    // Option 1: Try Walrus CLI
-    try {
-      const context = process.env.WALRUS_CONTEXT || 'testnet';
-      const output = execSync(
-        `walrus read "${blobId}" --context ${context} --url-only`,
-        { encoding: 'utf8' }
-      );
-      
-      const urlMatch = output.match(/https?:\/\/[^\s]+/);
-      if (urlMatch) {
-        return {
-          url: urlMatch[0],
-          expiresAt: new Date(Date.now() + expiresSec * 1000).toISOString(),
-          method: 'cli'
-        };
-      }
-    } catch (cliError) {
-      console.debug('Walrus CLI not available for signed URL:', cliError.message);
-    }
+    // Note: walrus read command doesn't support --url-only flag
+    // It downloads the file instead. For signed URLs, we need HTTP API.
+    // The /blob/:blobId endpoint handles direct downloads via walrus read.
 
-    // Option 2: HTTP API
+    // HTTP API for signed URLs
     if (config.walrus.apiUrl && config.walrus.apiUrl !== 'https://walrus.example/api') {
       const url = `${config.walrus.apiUrl.replace(/\/$/, '')}/signed_url`;
       const res = await axios.post(
@@ -146,17 +183,8 @@ async function getSignedFetchUrl(blobId, expiresSec = 60) {
       };
     }
 
-    // Fallback: construct a basic URL (for testing)
-    if (config.nodeEnv === 'development') {
-      return {
-        url: `${config.walrus.apiUrl || 'https://walrus.example'}/blob/${blobId}`,
-        expiresAt: new Date(Date.now() + expiresSec * 1000).toISOString(),
-        method: 'mock',
-        warning: 'Mock URL - not for production'
-      };
-    }
-
-    throw new Error('Walrus integration not configured for signed URLs');
+    // No mock fallback - throw error if not configured
+    throw new Error('Walrus integration not configured for signed URLs. Set WALRUS_API_URL.');
   } catch (err) {
     console.error('getSignedFetchUrl error:', err);
     throw new Error(`Failed to get signed URL: ${err.message}`);
@@ -164,4 +192,3 @@ async function getSignedFetchUrl(blobId, expiresSec = 60) {
 }
 
 module.exports = { uploadCiphertextToWalrus, getSignedFetchUrl };
-

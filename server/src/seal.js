@@ -13,17 +13,7 @@ const config = require('./config');
 async function storeEncryptedKeyForFile(fileId, encryptedKey, ownerAddress, policy = null) {
   try {
     if (!config.seal.apiUrl || config.seal.apiUrl === 'https://seal.example/api') {
-      // For development/testing: generate mock keyId
-      if (config.nodeEnv === 'development') {
-        console.warn('Using mock Seal keyId - configure SEAL_API_URL for production');
-        const { nanoid } = require('nanoid');
-        return {
-          keyId: nanoid(),
-          method: 'mock',
-          warning: 'Mock keyId - not for production'
-        };
-      }
-      throw new Error('Seal API URL not configured');
+      throw new Error('Seal API URL not configured. Set SEAL_API_URL environment variable.');
     }
 
     const url = `${config.seal.apiUrl.replace(/\/$/, '')}/keys`;
@@ -68,17 +58,7 @@ async function storeEncryptedKeyForFile(fileId, encryptedKey, ownerAddress, poli
 async function releaseKeyToBuyer(keyId, buyerAddress, paymentProof = null) {
   try {
     if (!config.seal.apiUrl || config.seal.apiUrl === 'https://seal.example/api') {
-      // For development/testing: return mock encrypted key
-      if (config.nodeEnv === 'development') {
-        console.warn('Using mock Seal key release - configure SEAL_API_URL for production');
-        return {
-          encryptedKeyForBuyer: 'mock_encrypted_key_for_buyer_' + buyerAddress,
-          releaseReceipt: 'mock_receipt_' + Date.now(),
-          method: 'mock',
-          warning: 'Mock key release - not for production'
-        };
-      }
-      throw new Error('Seal API URL not configured');
+      throw new Error('Seal API URL not configured. Set SEAL_API_URL environment variable.');
     }
 
     const url = `${config.seal.apiUrl.replace(/\/$/, '')}/keys/${keyId}/release`;
@@ -110,4 +90,3 @@ async function releaseKeyToBuyer(keyId, buyerAddress, paymentProof = null) {
 }
 
 module.exports = { storeEncryptedKeyForFile, releaseKeyToBuyer };
-

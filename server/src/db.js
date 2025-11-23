@@ -1,4 +1,5 @@
-const { Low, JSONFile } = require('lowdb');
+const { Low } = require('lowdb');
+const { JSONFile } = require('lowdb/node');
 const { join } = require('path');
 const fs = require('fs');
 const config = require('./config');
@@ -58,4 +59,3 @@ async function getFileMetadata(fileId) {
 }
 
 module.exports = { init, markTxConsumed, isTxConsumed, saveFileMetadata, getFileMetadata };
-

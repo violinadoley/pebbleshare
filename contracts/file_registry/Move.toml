@@ -1,0 +1,9 @@
+[package]
+name = "file_registry"
+version = "1.0.0"
+
+# Remove the [dependencies] section entirely
+# Sui will auto-add dependencies
+
+[addresses]
+file_registry = "0x0"
