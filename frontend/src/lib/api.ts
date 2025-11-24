@@ -37,7 +37,8 @@ export async function uploadFile(
   ownerAddress: string,
   priceRaw: number,
   encryptedKeyForOwner?: string,
-  epochs: number = 2
+  epochs: number = 2,
+  isPublic: boolean = false
 ): Promise<UploadResponse> {
   const response = await fetch(`${API_URL}/upload`, {
     method: 'POST',
@@ -51,6 +52,7 @@ export async function uploadFile(
       priceRaw,
       encryptedKeyForOwner: encryptedKeyForOwner || '',
       epochs,
+      isPublic,
     }),
   });
 
@@ -77,7 +79,10 @@ export async function uploadFile(
  */
 export async function getFile(
   fileId: string,
-  paymentTxDigest?: string
+  options?: {
+    paymentTxDigest?: string;
+    buyerAddress?: string;
+  }
 ): Promise<{
   ok: boolean;
   method: 'seal_key_release' | 'signed_fetch_url';
@@ -91,8 +96,11 @@ export async function getFile(
     'Content-Type': 'application/json',
   };
 
-  if (paymentTxDigest) {
-    headers['X-PAYMENT'] = paymentTxDigest;
+  if (options?.paymentTxDigest) {
+    headers['X-PAYMENT'] = options.paymentTxDigest;
+  }
+  if (options?.buyerAddress) {
+    headers['X-BUYER-ADDRESS'] = options.buyerAddress;
   }
 
   const response = await fetch(`${API_URL}/file/${fileId}`, {
@@ -138,3 +146,43 @@ export async function fetchBlob(blobId: string): Promise<{
   
     return response.json();
   }
+
+export interface ListedFile {
+  fileId: string;
+  filename: string;
+  ownerAddress: string;
+  priceRaw: number;
+  blobId: string;
+  keyId: string | null;
+  originalSize: number;
+  createdAt: string;
+  isPublic: boolean;
+  isPaywalled: boolean;
+}
+
+export async function listFiles(options: { publicOnly?: boolean; ownerAddress?: string } = {}): Promise<ListedFile[]> {
+  const params = new URLSearchParams();
+  if (options.publicOnly !== undefined) {
+    params.set('public', options.publicOnly ? 'true' : 'false');
+  }
+  if (options.ownerAddress) {
+    params.set('owner', options.ownerAddress);
+    // Don't override publicOnly when filtering by owner - let the original setting apply
+  }
+  const query = params.toString() ? `?${params.toString()}` : '';
+
+  const response = await fetch(`${API_URL}/files${query}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'List files failed' }));
+    throw new Error(error.error || `List files failed: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.files || [];
+}

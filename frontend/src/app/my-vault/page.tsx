@@ -4,8 +4,9 @@ import React, { useState, useMemo } from 'react';
 import Navbar from '../components/Navbar';
 import UploadModal from '../components/UploadModal';
 import { encryptWithSeal, createFileId, decryptWithBackupKey } from '@/lib/seal';
-import { uploadFile, getFile, fetchBlob } from '@/lib/api';
+import { uploadFile, getFile, fetchBlob, listFiles, ListedFile } from '@/lib/api';
 import { useWalletAddress, useIsWalletConnected, useSendPayment } from '@/lib/wallet';
+import { useSignPersonalMessage } from '@mysten/dapp-kit';
 
 // Type definition for Data Blob
 interface DataBlob {
@@ -14,10 +15,11 @@ interface DataBlob {
   priceRaw: number;
   keyId: string | null;
   createdAt: string;
-  walrus: object;
+  walrus?: { blobId: string; [key: string]: any };
   originalSize: number;
   isPaywalled: boolean;
   fileId?: string; // Sui object ID
+  isPublic: boolean;
 }
 
 // Mock data - simulating user's own data blobs
@@ -31,6 +33,7 @@ const mockMyBlobs: DataBlob[] = [
     walrus: { blobId: 'walrus-001', status: 'uploaded' },
     originalSize: 2048576, // 2 MB
     isPaywalled: true,
+    isPublic: true,
   },
   {
     filename: 'personal-documents.zip',
@@ -41,6 +44,7 @@ const mockMyBlobs: DataBlob[] = [
     walrus: { blobId: 'walrus-003', status: 'uploaded' },
     originalSize: 10485760, // 10 MB
     isPaywalled: false,
+    isPublic: false,
   },
   {
     filename: 'project-backup.tar.gz',
@@ -51,6 +55,7 @@ const mockMyBlobs: DataBlob[] = [
     walrus: { blobId: 'walrus-004', status: 'uploaded' },
     originalSize: 15728640, // 15 MB
     isPaywalled: true,
+    isPublic: false,
   },
 ];
 
@@ -79,6 +84,24 @@ const formatDate = (dateString: string): string => {
   });
 };
 
+const truncateAddress = (address: string, start: number = 6, end: number = 4): string => {
+  if (!address) return '';
+  return `${address.slice(0, start)}...${address.slice(-end)}`;
+};
+
+const mapListedFileToBlob = (file: ListedFile): DataBlob => ({
+  filename: file.filename,
+  ownerAddress: file.ownerAddress,
+  priceRaw: file.priceRaw,
+  keyId: file.keyId,
+  createdAt: file.createdAt,
+  walrus: { blobId: file.blobId },
+  originalSize: file.originalSize,
+  isPaywalled: file.isPaywalled,
+  fileId: file.fileId,
+  isPublic: file.isPublic,
+});
+
 const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -87,6 +110,14 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
   const walletAddress = useWalletAddress();
   const isWalletConnected = useIsWalletConnected();
   const sendPayment = useSendPayment();
+  const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
+  const signPersonalMessageForSession = React.useCallback(
+    async (message: Uint8Array) => {
+      const { signature } = await signPersonalMessage({ message });
+      return signature;
+    },
+    [signPersonalMessage]
+  );
 
   const handleDownload = async (txDigest?: string) => {
     if (!blob.fileId) {
@@ -101,7 +132,10 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
     try {
       // Try to access file (will get 402 if paywalled)
       const base64Digest = txDigest ? btoa(txDigest) : undefined;
-      const response = await getFile(blob.fileId, base64Digest);
+      const response = await getFile(blob.fileId, {
+        paymentTxDigest: base64Digest,
+        buyerAddress: walletAddress || undefined,
+      });
       
       // If we get here, file is accessible (free or already paid)
       if (response.method === 'seal_key_release' && response.encryptedKeyForBuyer && response.fileMetadata) {
@@ -143,7 +177,8 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
             packageId,
             response.encryptedKeyForBuyer,
             buyerAddress,
-            txDigest
+            txDigest,
+            signPersonalMessageForSession
           );
           
           // 5. Create blob and trigger download
@@ -170,59 +205,34 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
       }
     } catch (error: any) {
       if (error.type === 'payment_required') {
-        // Show payment information
-        const paymentData = error.data;
-        setPaymentInfo(paymentData);
-        
-        // Check if wallet is connected
-        if (!isWalletConnected || !walletAddress) {
-          const proceed = confirm(
-            `Payment Required\n\n` +
-            `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
-            `Pay to: ${paymentData.pay_to}\n` +
-            `Network: ${paymentData.network}\n\n` +
-            `Please connect your wallet to make the payment automatically.`
-          );
-          return;
-        }
-        
-        // Automatically make payment using wallet
-        try {
-          setIsPaying(true);
-          const amountMist = BigInt(paymentData.amount_raw);
-          
-          // Show confirmation dialog
-          const proceed = confirm(
-            `Payment Required\n\n` +
-            `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
-            `Pay to: ${paymentData.pay_to}\n` +
-            `Network: ${paymentData.network}\n\n` +
-            `Click OK to approve the payment transaction in your wallet.`
-          );
-          
-          if (!proceed) {
-            setIsPaying(false);
-            return;
-          }
-          
-          // Send payment transaction
-          const txDigest = await sendPayment(paymentData.pay_to, amountMist);
-          
-          // Wait a moment for transaction to be processed
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Retry download with payment proof
-          await handleDownload(txDigest);
-        } catch (paymentError: any) {
-          console.error('Payment error:', paymentError);
-          setDownloadError(`Payment failed: ${paymentError.message || 'Unknown error'}`);
-          setIsPaying(false);
-        }
+        setPaymentInfo(error.data);
+        setDownloadError(null);
       } else {
         setDownloadError(error.message || 'Download failed');
       }
     } finally {
       setIsDownloading(false);
+      setIsPaying(false);
+    }
+  };
+
+  const handlePayment = async () => {
+    if (!paymentInfo) return;
+    if (!isWalletConnected) {
+      setDownloadError('Please connect your wallet to approve the payment.');
+      return;
+    }
+
+    try {
+      setIsPaying(true);
+      const amountMist = BigInt(paymentInfo.amount_raw);
+      const txDigest = await sendPayment(paymentInfo.pay_to, amountMist);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await handleDownload(txDigest);
+    } catch (paymentError: any) {
+      console.error('Payment error:', paymentError);
+      setDownloadError(`Payment failed: ${paymentError.message || 'Unknown error'}`);
+    } finally {
       setIsPaying(false);
     }
   };
@@ -246,6 +256,11 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
                 Encrypted
               </span>
             )}
+            {blob.isPublic && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                Public
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -259,10 +274,27 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
 
       {/* Payment Info Display */}
       {paymentInfo && (
-        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-          <p className="text-sm font-medium text-amber-900 mb-1">Payment Required</p>
-          <p className="text-xs text-amber-700">
-            {paymentInfo.amount_raw / 1000000000} SUI to {paymentInfo.pay_to.slice(0, 10)}...
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold text-amber-900">x402 Payment Required</p>
+            <span className="text-xs text-amber-800 font-mono">
+              {truncateAddress(paymentInfo.payment_id || blob.fileId || '', 6, 6)}
+            </span>
+          </div>
+          <ul className="text-xs text-amber-800 space-y-1 mb-3">
+            <li>Amount: {formatPrice(paymentInfo.amount_raw)}</li>
+            <li>Pay to: {paymentInfo.pay_to}</li>
+            <li>Network: {paymentInfo.network}</li>
+          </ul>
+          <button
+            onClick={handlePayment}
+            disabled={isPaying}
+            className="w-full px-4 py-2 text-sm font-medium rounded-lg text-white bg-amber-600 hover:bg-amber-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isPaying ? 'Authorizing...' : 'Pay & Unlock'}
+          </button>
+          <p className="text-[11px] text-amber-700 mt-2">
+            Your wallet will send the payment and automatically retry this request with the transaction digest.
           </p>
         </div>
       )}
@@ -341,8 +373,32 @@ export default function MyVaultPage() {
   const [myBlobs, setMyBlobs] = useState<DataBlob[]>(mockMyBlobs);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const walletAddress = useWalletAddress();
   const isWalletConnected = useIsWalletConnected();
+
+  React.useEffect(() => {
+    const fetchMyFiles = async () => {
+      if (!walletAddress) {
+        setMyBlobs([]); // Show empty array when wallet not connected
+        return;
+      }
+      try {
+        setIsLoadingFiles(true);
+        setFetchError(null);
+        const result = await listFiles({ publicOnly: false, ownerAddress: walletAddress });
+        const mapped = result.map(mapListedFileToBlob);
+        setMyBlobs(mapped); // Show real files only, no mock data fallback
+      } catch (err: any) {
+        setFetchError(err.message || 'Failed to load your files.');
+      } finally {
+        setIsLoadingFiles(false);
+      }
+    };
+
+    fetchMyFiles();
+  }, [walletAddress]);
 
   // Handle file upload with real backend integration
   const handleUpload = async (data: {
@@ -350,6 +406,7 @@ export default function MyVaultPage() {
     isPaywalled: boolean;
     priceRaw: number;
     isEncrypted: boolean;
+    isPublic: boolean;
   }) => {
     setIsUploading(true);
     setUploadError(null);
@@ -410,7 +467,8 @@ export default function MyVaultPage() {
         ownerAddress,
         data.priceRaw,
         encryptedKeyForOwner,
-        2 // epochs
+        2, // epochs
+        data.isPublic
       );
 
       // Create new blob from response
@@ -424,6 +482,7 @@ export default function MyVaultPage() {
         originalSize: data.file.size,
         isPaywalled: data.isPaywalled,
         fileId: response.fileId, // Sui object ID
+        isPublic: data.isPublic,
       };
 
       // Add to list
@@ -499,6 +558,14 @@ export default function MyVaultPage() {
             <p className="text-lg text-stone-600 max-w-2xl">
               Manage your stored data blobs, view statistics, and control access settings.
             </p>
+            {fetchError && (
+              <div className="mt-4 p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-700">
+                {fetchError}
+              </div>
+            )}
+            {isLoadingFiles && (
+              <div className="mt-4 text-sm text-stone-500">Loading your files...</div>
+            )}
           </div>
 
           {/* Stats Cards */}

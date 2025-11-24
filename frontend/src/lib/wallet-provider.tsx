@@ -22,10 +22,8 @@ export function WalletProviderWrapper({ children }: WalletProviderWrapperProps) 
       }} defaultNetwork={network}>
         <WalletProvider
           autoConnect={true}
-          // Enable Slush Wallet support
-          slushWallet={{
-            name: 'PebbleShare',
-          }}
+          // Support multiple wallet types for better compatibility
+          enableUnsafeBurner={process.env.NODE_ENV === 'development'}
         >
           {children}
         </WalletProvider>

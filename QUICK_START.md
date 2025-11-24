@@ -54,6 +54,25 @@ NEXT_PUBLIC_SEAL_KEY_SERVER_2=0xYOUR_KEY_SERVER_2_OBJECT_ID
 
 ---
 
+## 💡 WAL Tokens Required for Walrus CLI
+
+Walrus storage via the CLI consumes **WAL tokens**. The CLI uses the Sui wallet stored in `~/.sui/sui_config/client.yaml`.
+
+- **Active wallet address:** `0x7d361b42cbd53c27d7eb0d4d3e352fc290e88c1e1c3f56e308226e769c878c02`
+- Without WAL tokens you will see `could not find WAL coins with sufficient balance`.
+
+### How to get WAL testnet tokens
+
+1. **Walrus Discord (recommended)**
+   - Join the Walrus Protocol Discord (link from walrus.xyz)
+   - Open the `#testnet-faucet` channel
+   - Request tokens: `!faucet 0x7d361b42cbd53c27d7eb0d4d3e352fc290e88c1e1c3f56e308226e769c878c02`
+2. **Alternative:** configure the backend to use the Walrus HTTP API (`WALRUS_API_URL`, `WALRUS_API_KEY`) instead of the CLI.
+
+Once the wallet has WAL tokens, uploads will succeed without errors.
+
+---
+
 ## 🧪 Test Your Setup
 
 ### 1. Test Walrus CLI

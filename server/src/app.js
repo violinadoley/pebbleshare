@@ -80,7 +80,14 @@ async function start() {
         return res.status(400).json({ error: validation.error });
       }
 
-      const { filename, ciphertextBase64, ownerAddress, priceRaw, encryptedKeyForOwner, epochs } = req.body;
+      const { filename, ciphertextBase64, ownerAddress, priceRaw, encryptedKeyForOwner, epochs, isPublic } = req.body;
+      const isPublicFlag = typeof isPublic === 'string'
+        ? isPublic.toLowerCase() === 'true'
+        : Boolean(isPublic);
+      const parsedPrice = Number(priceRaw);
+      const finalPrice = Number.isFinite(parsedPrice) && parsedPrice >= 0
+        ? parsedPrice
+        : config.sui.minPaymentRaw;
       
       // Sanitize filename
       const safeFilename = sanitizeFilename(filename);
@@ -107,7 +114,6 @@ async function start() {
       const keyId = encryptedKeyForOwner || '';
 
       // 3) Create file metadata on-chain
-      const price = Number(priceRaw) || config.sui.minPaymentRaw;
       let fileObjectId;
       let txDigest;
       
@@ -115,7 +121,7 @@ async function start() {
         const onChainResult = await createFileMetadataOnChain(
           safeFilename,
           ownerAddress,
-          price,
+          finalPrice,
           blobId,
           keyId,
           buffer.length
@@ -130,15 +136,32 @@ async function start() {
         throw new Error(`Failed to create file metadata on-chain: ${onChainError.message}`);
       }
 
+      const createdAt = new Date().toISOString();
+
+      await db.saveFileMetadata(fileObjectId, {
+        fileId: fileObjectId,
+        filename: safeFilename,
+        ownerAddress,
+        priceRaw: finalPrice,
+        blobId,
+        keyId: keyId || null,
+        originalSize: buffer.length,
+        createdAt,
+        isPublic: isPublicFlag,
+        isPaywalled: finalPrice > 0,
+      });
+
       return res.json({ 
         ok: true, 
         fileId: fileObjectId, // Return the Sui object ID as the file identifier
         blobId, // Also return blobId for reference
         walrus: uploadResp, 
         keyId: keyId || null,
-        priceRaw: price,
+        priceRaw: finalPrice,
         txDigest, // Transaction digest for the on-chain creation
-        onChain: true
+        onChain: true,
+        isPublic: isPublicFlag,
+        createdAt,
       });
     } catch (err) {
       console.error('Upload error:', err);
@@ -177,7 +200,76 @@ async function start() {
         return res.status(404).json({ error: 'file_not_found', message: 'File metadata not found on-chain' });
       }
 
-      const amountRaw = meta.priceRaw || config.sui.minPaymentRaw;
+      const localMeta = await db.getFileMetadata(fileId);
+      const buyerAddressHeader = (req.get('x-buyer-address') || req.query.buyer || '').toString().toLowerCase();
+      const ownerAddressLower = (localMeta?.ownerAddress || meta.owner || '').toLowerCase();
+      const parsedAmountRaw = Number(localMeta?.priceRaw ?? meta.priceRaw ?? meta.price);
+      let amountRaw = Number.isFinite(parsedAmountRaw) ? parsedAmountRaw : config.sui.minPaymentRaw;
+      const isOwnerRequest = buyerAddressHeader && ownerAddressLower && buyerAddressHeader === ownerAddressLower;
+      if (isOwnerRequest) {
+        amountRaw = 0;
+      }
+
+      const normalizedMeta = {
+        filename: localMeta?.filename || meta.filename,
+        owner: localMeta?.ownerAddress || meta.owner,
+        priceRaw: amountRaw,
+        blobId: localMeta?.blobId || meta.blobId,
+        keyId: localMeta?.keyId || meta.keyId,
+        originalSize: localMeta?.originalSize || meta.originalSize,
+        createdAt: localMeta?.createdAt || meta.createdAt,
+        isPublic: localMeta?.isPublic ?? true,
+        isPaywalled: localMeta?.isPaywalled ?? amountRaw > 0,
+      };
+
+      const releaseFile = async (receipt = null) => {
+        if (receipt) {
+          res.set('X-PAYMENT-RESPONSE', receipt);
+        }
+
+        if (normalizedMeta.keyId && normalizedMeta.keyId.length > 0) {
+          return res.json({
+            ok: true,
+            method: 'seal_key_release',
+            encryptedKeyForBuyer: normalizedMeta.keyId,
+            receipt,
+            fileMetadata: {
+              filename: normalizedMeta.filename,
+              originalSize: normalizedMeta.originalSize,
+              owner: normalizedMeta.owner,
+              createdAt: normalizedMeta.createdAt,
+              blobId: normalizedMeta.blobId,
+              isPublic: normalizedMeta.isPublic,
+              isPaywalled: normalizedMeta.isPaywalled,
+              priceRaw: normalizedMeta.priceRaw,
+            },
+          });
+        }
+
+        const signed = await getSignedFetchUrl(normalizedMeta.blobId, 300);
+
+        return res.json({
+          ok: true,
+          method: 'signed_fetch_url',
+          signedFetchUrl: signed.url,
+          expiresAt: signed.expiresAt || null,
+          receipt,
+          fileMetadata: {
+            filename: normalizedMeta.filename,
+            originalSize: normalizedMeta.originalSize,
+            owner: normalizedMeta.owner,
+            createdAt: normalizedMeta.createdAt,
+            blobId: normalizedMeta.blobId,
+            isPublic: normalizedMeta.isPublic,
+            isPaywalled: normalizedMeta.isPaywalled,
+            priceRaw: normalizedMeta.priceRaw,
+          },
+        });
+      };
+
+      if (amountRaw <= 0) {
+        return releaseFile();
+      }
 
       // x402: Return 402 Payment Required if no payment proof provided
       if (!paymentHeader) {
@@ -206,48 +298,9 @@ async function start() {
       // Payment verified - release key or generate signed URL
       try {
         const receipt = makeReceipt(verification.txDigest, fileId, verification.amount);
-        
-        // Set x402 receipt header
-        res.set('X-PAYMENT-RESPONSE', receipt);
-
-        // If Seal key exists, return it (it's stored in keyId field)
-        if (meta.keyId && meta.keyId.length > 0) {
-          // The keyId field contains the Seal backup key
-          return res.json({
-            ok: true,
-            method: 'seal_key_release',
-            encryptedKeyForBuyer: meta.keyId, // This is the backup key from Seal
-            receipt: receipt,
-            fileMetadata: {
-              filename: meta.filename,
-              originalSize: meta.originalSize,
-              owner: meta.owner,
-              createdAt: meta.createdAt,
-              blobId: meta.blobId 
-            }
-          });
-        } else {
-          // No Seal key - return signed Walrus URL
-          const signed = await getSignedFetchUrl(meta.blobId, 300); // 5 minutes
-
-          return res.json({
-            ok: true,
-            method: 'signed_fetch_url',
-            signedFetchUrl: signed.url,
-            expiresAt: signed.expiresAt || null,
-            receipt: receipt,
-            fileMetadata: {
-              filename: meta.filename,
-              originalSize: meta.originalSize,
-              owner: meta.owner,
-              createdAt: meta.createdAt,
-              blobId: meta.blobId
-            }
-          });
-        }
+        return releaseFile(receipt);
       } catch (releaseError) {
         console.error('Key release error:', releaseError);
-        // Even if release fails, payment was verified - return receipt
         return res.status(500).json({ 
           error: 'release_failed', 
           detail: releaseError.message || null,
@@ -260,6 +313,31 @@ async function start() {
       return res.status(500).json({ 
         error: 'server_error', 
         detail: err.message || 'Internal server error' 
+      });
+    }
+  });
+
+  /**
+   * List uploaded files (optionally only public ones)
+   */
+  app.get('/files', async (req, res) => {
+    try {
+      const publicOnly = req.query.public !== 'false';
+      const ownerFilter = typeof req.query.owner === 'string' ? req.query.owner.toLowerCase() : null;
+      const filter = {};
+      if (publicOnly) {
+        filter.isPublic = true;
+      }
+      if (ownerFilter) {
+        filter.ownerAddress = ownerFilter;
+      }
+      const files = await db.listFiles(filter);
+      return res.json({ ok: true, files });
+    } catch (err) {
+      console.error('List files error:', err);
+      return res.status(500).json({
+        error: 'server_error',
+        detail: err.message || 'Internal server error'
       });
     }
   });
@@ -328,13 +406,10 @@ async function start() {
         
         console.log('[Blob Fetch] Successfully fetched blob via CLI, size:', blobData.length, 'bytes');
         
-        // Return as base64
-        return res.json({
-          ok: true,
-          blobId,
-          data: blobData.toString('base64'),
-          contentType: 'application/octet-stream'
-        });
+        // Serve raw file content for download (not JSON)
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="blob-${blobId}"`);
+        return res.send(blobData);
       } catch (cliError) {
         console.error('[Blob Fetch] Walrus CLI error:', {
           message: cliError.message,
@@ -371,13 +446,11 @@ async function start() {
         const blobData = await blobResponse.arrayBuffer();
         console.log('[Blob Fetch] Successfully fetched blob via HTTP, size:', blobData.byteLength, 'bytes');
         
-        // Return as base64 for easy transfer
-        return res.json({
-          ok: true,
-          blobId,
-          data: Buffer.from(blobData).toString('base64'),
-          contentType: blobResponse.headers.get('content-type') || 'application/octet-stream'
-        });
+        // Serve raw file content for download (not JSON)
+        const contentType = blobResponse.headers.get('content-type') || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="blob-${blobId}"`);
+        return res.send(Buffer.from(blobData));
       } catch (httpError) {
         console.error('[Blob Fetch] HTTP fetch error:', httpError.message);
         throw httpError;

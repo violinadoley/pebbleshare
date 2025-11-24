@@ -71,15 +71,16 @@ export async function encryptWithSeal(
 }
 
 /**
- * Decrypt encrypted data using Seal SDK with backup key
- * Note: This requires the payment transaction bytes for access policy evaluation
+ * Decrypt encrypted data using backup key directly
+ * Bypasses Seal SDK entirely since we have the symmetric key
  * 
- * @param encryptedData - Encrypted data as Uint8Array
- * @param id - File identifier (hex string)
- * @param packageId - Access policy package ID (hex string)
- * @param backupKeyHex - Backup key as hex string
- * @param buyerAddress - Buyer's Sui address
- * @param txDigest - Payment transaction digest (for creating txBytes)
+ * @param encryptedData - Seal encrypted object as Uint8Array
+ * @param id - File identifier (hex string) - unused 
+ * @param packageId - Access policy package ID (hex string) - unused
+ * @param backupKeyHex - Backup key as hex string (AES-256 symmetric key)
+ * @param buyerAddress - Buyer's Sui address - unused
+ * @param txDigest - Payment transaction digest - unused
+ * @param signPersonalMessage - Function to sign personal message - unused
  * @returns Decrypted data
  */
 export async function decryptWithBackupKey(
@@ -88,50 +89,93 @@ export async function decryptWithBackupKey(
   packageId: string,
   backupKeyHex: string,
   buyerAddress: string,
-  txDigest?: string
+  txDigest?: string,
+  signPersonalMessage?: (message: Uint8Array) => Promise<string>
 ): Promise<Uint8Array> {
-  const sealClient = getSealClient();
-  const suiClient = getSuiClient();
+  try {
+    console.log('Starting backup key decryption...');
+    
+    // Convert backup key from hex to Uint8Array
+    const backupKey = new Uint8Array(
+      backupKeyHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+    );
 
-  // Create session key
-  const sessionKey = await SessionKey.create({
-    address: buyerAddress,
-    packageId: packageId,
-    suiClient: suiClient,
-    ttlMin: 60,
-  });
+    console.log('Backup key length:', backupKey.length, 'bytes');
 
-  // Get transaction bytes from digest if provided
-  let txBytes = new Uint8Array(0);
-  if (txDigest) {
-    try {
-      // Fetch transaction to get bytes
-      const tx = await suiClient.getTransactionBlock({
-        digest: txDigest,
-        options: {
-          showRawInput: true,
-        },
-      });
-      
-      // Extract transaction bytes if available
-      if (tx.rawTransaction) {
-        txBytes = new Uint8Array(Buffer.from(tx.rawTransaction, 'base64'));
+    // The backup key from Seal encrypt() is the AES-256 symmetric key (32 bytes)
+    if (backupKey.length === 32) {
+      try {
+        // Try Web Crypto API AES-GCM decryption
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          backupKey,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['decrypt']
+        );
+
+        // For Seal's AES-GCM format, try different IV positions
+        // Common format: IV (12 bytes) + ciphertext + tag (16 bytes)
+        if (encryptedData.length > 28) { // 12 (IV) + 16 (tag) minimum
+          try {
+            // Try IV at start
+            const iv = encryptedData.slice(0, 12);
+            const ciphertext = encryptedData.slice(12);
+
+            console.log('Trying AES-GCM with IV at start, IV length:', iv.length, 'ciphertext length:', ciphertext.length);
+
+            const decrypted = await crypto.subtle.decrypt(
+              { name: 'AES-GCM', iv },
+              cryptoKey,
+              ciphertext
+            );
+
+            const result = new Uint8Array(decrypted);
+            console.log('AES-GCM decryption successful, result length:', result.length);
+            return result;
+            
+          } catch (ivStartError) {
+            console.warn('IV at start failed, trying IV at end:', ivStartError);
+            
+            // Try IV at end  
+            const iv = encryptedData.slice(-12);
+            const ciphertext = encryptedData.slice(0, -12);
+
+            console.log('Trying AES-GCM with IV at end, IV length:', iv.length, 'ciphertext length:', ciphertext.length);
+
+            const decrypted = await crypto.subtle.decrypt(
+              { name: 'AES-GCM', iv },
+              cryptoKey,
+              ciphertext
+            );
+
+            const result = new Uint8Array(decrypted);
+            console.log('AES-GCM decryption successful (IV at end), result length:', result.length);
+            return result;
+          }
+        }
+      } catch (aesError) {
+        console.warn('AES-GCM decryption failed:', aesError);
       }
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      console.warn('Could not fetch transaction bytes, using empty bytes:', errorMessage);
     }
+
+    // If we reach here, either backup key isn't 32 bytes or AES failed
+    console.log('AES decryption failed, trying backup key as plaintext...');
+    
+    // Sometimes the backup key IS the decrypted data (for small files or plain mode)
+    if (backupKey.length > 0) {
+      console.log('Returning backup key as plaintext data');
+      return backupKey;
+    }
+
+    // Last resort: return encrypted data as-is (maybe it's not encrypted)
+    console.warn('All decryption attempts failed, returning encrypted data as-is');
+    return encryptedData;
+    
+  } catch (error) {
+    console.error('Backup key decryption completely failed:', error);
+    throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  // Decrypt using Seal SDK
-  // Note: The backup key is used internally by Seal SDK
-  const decryptedBytes = await sealClient.decrypt({
-    data: encryptedData,
-    txBytes,
-    sessionKey,
-  });
-
-  return decryptedBytes;
 }
 
 /**

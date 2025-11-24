@@ -10,6 +10,7 @@ interface UploadModalProps {
     isPaywalled: boolean;
     priceRaw: number;
     isEncrypted: boolean;
+    isPublic: boolean;
   }) => void | Promise<void>;
   isUploading?: boolean;
   uploadError?: string | null;
@@ -26,6 +27,7 @@ export default function UploadModal({
   const [isPaywalled, setIsPaywalled] = useState(false);
   const [price, setPrice] = useState<string>('');
   const [isEncrypted, setIsEncrypted] = useState(false);
+  const [isPublic, setIsPublic] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -70,6 +72,7 @@ export default function UploadModal({
       isPaywalled,
       priceRaw,
       isEncrypted,
+      isPublic,
     });
 
     // Reset form only if upload succeeded (onUpload handles errors)
@@ -79,6 +82,7 @@ export default function UploadModal({
       setIsPaywalled(false);
       setPrice('');
       setIsEncrypted(false);
+      setIsPublic(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -91,6 +95,7 @@ export default function UploadModal({
     setIsPaywalled(false);
     setPrice('');
     setIsEncrypted(false);
+    setIsPublic(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -325,6 +330,33 @@ export default function UploadModal({
                       className={`
                         absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-lg transform transition-transform duration-300
                         ${isEncrypted ? 'translate-x-6' : 'translate-x-0'}
+                      `}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Marketplace Toggle */}
+              <div className="glass-card p-5 rounded-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-base font-semibold text-stone-900 mb-1">List on Marketplace</h3>
+                    <p className="text-sm text-stone-500">Make this file discoverable in the public marketplace</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPublic(!isPublic)}
+                    disabled={isUploading}
+                    className={`
+                      relative w-14 h-8 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2
+                      ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}
+                      ${isPublic ? 'bg-emerald-500' : 'bg-stone-200'}
+                    `}
+                  >
+                    <span
+                      className={`
+                        absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-lg transform transition-transform duration-300
+                        ${isPublic ? 'translate-x-6' : 'translate-x-0'}
                       `}
                     />
                   </button>

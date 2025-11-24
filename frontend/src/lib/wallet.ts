@@ -14,8 +14,7 @@ export function useWalletAddress(): string | null {
  */
 export function useIsWalletConnected(): boolean {
   const { currentWallet } = useCurrentWallet();
-  const address = useWalletAddress();
-  return (currentWallet !== null && currentWallet !== undefined) || address !== null;
+  return Boolean(currentWallet && currentWallet.accounts && currentWallet.accounts.length > 0);
 }
 
 /**

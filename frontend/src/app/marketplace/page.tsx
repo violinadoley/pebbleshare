@@ -1,67 +1,13 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import { useWalletAddress, useIsWalletConnected, useSendPayment } from '@/lib/wallet';
-import { getFile, fetchBlob } from '@/lib/api';
+import { useSignPersonalMessage } from '@mysten/dapp-kit';
+import { getFile, fetchBlob, listFiles, ListedFile } from '@/lib/api';
 import { createFileId, decryptWithBackupKey } from '@/lib/seal';
 
-// Type definition for Data Blob
-interface DataBlob {
-  filename: string;
-  ownerAddress: string;
-  priceRaw: number;
-  keyId: string | null;
-  createdAt: string;
-  walrus: object;
-  originalSize: number;
-  isPaywalled: boolean;
-  fileId?: string; // Sui object ID
-}
-
-// Mock data - simulating fetched data blobs
-const mockDataBlobs: DataBlob[] = [
-  {
-    filename: 'market-analysis-2024.csv',
-    ownerAddress: '0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c',
-    priceRaw: 5000000000, // 5 SUI in MIST
-    keyId: 'seal-key-abc123',
-    createdAt: '2024-01-15T10:30:00Z',
-    walrus: { blobId: 'walrus-001', status: 'uploaded' },
-    originalSize: 2048576, // 2 MB
-    isPaywalled: true,
-  },
-  {
-    filename: 'user-behavior-dataset.json',
-    ownerAddress: '0x2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d',
-    priceRaw: 10000000000, // 10 SUI in MIST
-    keyId: null,
-    createdAt: '2024-01-20T14:45:00Z',
-    walrus: { blobId: 'walrus-002', status: 'uploaded' },
-    originalSize: 5242880, // 5 MB
-    isPaywalled: true,
-  },
-  {
-    filename: 'public-research-paper.pdf',
-    ownerAddress: '0x3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e',
-    priceRaw: 0,
-    keyId: 'seal-key-xyz789',
-    createdAt: '2024-01-18T09:15:00Z',
-    walrus: { blobId: 'walrus-003', status: 'uploaded' },
-    originalSize: 10485760, // 10 MB
-    isPaywalled: false,
-  },
-  {
-    filename: 'encrypted-financial-data.dat',
-    ownerAddress: '0x4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f',
-    priceRaw: 25000000000, // 25 SUI in MIST
-    keyId: 'seal-key-def456',
-    createdAt: '2024-01-22T16:20:00Z',
-    walrus: { blobId: 'walrus-004', status: 'uploaded' },
-    originalSize: 15728640, // 15 MB
-    isPaywalled: true,
-  },
-];
+type DataBlob = ListedFile;
 
 // Utility functions
 const formatPrice = (priceRaw: number): string => {
@@ -94,63 +40,45 @@ const truncateAddress = (address: string, start: number = 6, end: number = 4): s
 
 const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
   const [isPurchasing, setIsPurchasing] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<any>(null);
   const walletAddress = useWalletAddress();
   const isWalletConnected = useIsWalletConnected();
   const sendPayment = useSendPayment();
+  const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
+  const signPersonalMessageForSession = React.useCallback(
+    async (message: Uint8Array) => {
+      const { signature } = await signPersonalMessage({ message });
+      return signature;
+    },
+    [signPersonalMessage]
+  );
 
-  const handlePurchase = async () => {
+  const handlePurchase = async (txDigest?: string) => {
     if (!blob.fileId) {
       setError('File ID not available');
       return;
     }
 
     if (!isWalletConnected || !walletAddress) {
-      alert('Please connect your wallet to purchase access to this file.');
+      setError('Please connect your wallet to purchase access to this file.');
       return;
     }
 
     setIsPurchasing(true);
     setError(null);
+    setPaymentInfo(null);
 
     try {
       // First, try to get the file (will return 402 if payment required)
-      let response;
-      try {
-        response = await getFile(blob.fileId);
-      } catch (error: any) {
-        if (error.type === 'payment_required') {
-          const paymentData = error.data;
-          
-          // Show confirmation
-          const proceed = confirm(
-            `Purchase Access\n\n` +
-            `File: ${blob.filename}\n` +
-            `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
-            `Pay to: ${paymentData.pay_to}\n\n` +
-            `Click OK to approve the payment transaction in your wallet.`
-          );
-          
-          if (!proceed) {
-            setIsPurchasing(false);
-            return;
-          }
-          
-          // Make payment
-          const amountMist = BigInt(paymentData.amount_raw);
-          const txDigest = await sendPayment(paymentData.pay_to, amountMist);
-          
-          // Wait for transaction to be processed
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Retry with payment proof
-          const base64Digest = btoa(txDigest);
-          response = await getFile(blob.fileId, base64Digest);
-        } else {
-          throw error;
-        }
-      }
-      
+      const base64Digest = txDigest ? btoa(txDigest) : undefined;
+      // For marketplace purchases, DON'T send buyerAddress to force x402 payment even for owners
+      let response = await getFile(blob.fileId, {
+        paymentTxDigest: base64Digest,
+        // buyerAddress intentionally omitted to enforce x402 payment
+      });
+
       // File access granted - handle download
       if (response.method === 'seal_key_release' && response.encryptedKeyForBuyer && response.fileMetadata) {
         // Encrypted file - fetch and decrypt
@@ -177,7 +105,8 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
           packageId,
           response.encryptedKeyForBuyer,
           walletAddress,
-          undefined // txDigest not needed for decryption in this case
+          undefined,
+          signPersonalMessageForSession
         );
         
         const decryptedBlob = new Blob([new Uint8Array(decryptedBytes)], {
@@ -193,17 +122,42 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         
-        alert('File downloaded successfully!');
       } else if (response.signedFetchUrl) {
         // Direct download
         window.open(response.signedFetchUrl, '_blank');
-        alert('File opened in new tab!');
       }
     } catch (err: any) {
-      console.error('Purchase error:', err);
-      setError(err.message || 'Purchase failed. Please try again.');
+      if (err.type === 'payment_required') {
+        setPaymentInfo(err.data);
+        setError(null);
+      } else {
+        console.error('Purchase error:', err);
+        setError(err.message || 'Purchase failed. Please try again.');
+      }
     } finally {
       setIsPurchasing(false);
+      setIsPaying(false);
+    }
+  };
+
+  const handlePayment = async () => {
+    if (!paymentInfo) return;
+    if (!isWalletConnected) {
+      setError('Please connect your wallet to pay.');
+      return;
+    }
+
+    try {
+      setIsPaying(true);
+      const amountMist = BigInt(paymentInfo.amount_raw);
+      const txDigest = await sendPayment(paymentInfo.pay_to, amountMist);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await handlePurchase(txDigest);
+    } catch (paymentError: any) {
+      console.error('Payment error:', paymentError);
+      setError(paymentError.message || 'Payment failed. Please try again.');
+    } finally {
+      setIsPaying(false);
     }
   };
 
@@ -215,11 +169,23 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
           <h3 className="text-lg font-semibold text-stone-900 mb-1 truncate group-hover:text-stone-700 transition-colors">
             {blob.filename}
           </h3>
-          {blob.isPaywalled && (
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-              Paywalled
-            </span>
-          )}
+          <div className="flex gap-2 mt-2">
+            {blob.isPaywalled && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                Paywalled
+              </span>
+            )}
+            {blob.keyId && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+                Encrypted
+              </span>
+            )}
+            {blob.isPublic && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                Public
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -229,6 +195,32 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
           {formatPrice(blob.priceRaw)}
         </div>
       </div>
+
+      {paymentInfo && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold text-amber-900">x402 Payment Required</p>
+            <span className="text-xs text-amber-800 font-mono">
+              {truncateAddress(paymentInfo.payment_id || blob.fileId || '', 6, 6)}
+            </span>
+          </div>
+          <ul className="text-xs text-amber-800 space-y-1 mb-3">
+            <li>Amount: {formatPrice(paymentInfo.amount_raw)}</li>
+            <li>Pay to: {paymentInfo.pay_to}</li>
+            <li>Network: {paymentInfo.network}</li>
+          </ul>
+          <button
+            onClick={handlePayment}
+            disabled={isPaying}
+            className="w-full px-4 py-2 text-sm font-medium rounded-lg text-white bg-amber-600 hover:bg-amber-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isPaying ? 'Authorizing...' : 'Pay & Unlock'}
+          </button>
+          <p className="text-[11px] text-amber-700 mt-2">
+            Your wallet will send the payment and automatically retry this request with the transaction digest.
+          </p>
+        </div>
+      )}
 
       {/* Details grid */}
       <div className="space-y-3 mb-4">
@@ -264,7 +256,7 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
 
       {/* Action button */}
       <button 
-        onClick={handlePurchase}
+        onClick={() => handlePurchase()}
         disabled={isPurchasing || !blob.fileId}
         className="w-full mt-4 px-4 py-2.5 bg-stone-900 text-white rounded-lg font-medium hover:bg-stone-800 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
@@ -277,7 +269,7 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
             Processing...
           </span>
         ) : (
-          blob.isPaywalled ? 'Purchase Access' : 'View Details'
+          blob.isPaywalled ? 'Purchase Access' : 'Download'
         )}
       </button>
     </div>
@@ -286,19 +278,45 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
 
 export default function MarketplacePage() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [files, setFiles] = useState<DataBlob[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Filter data blobs based on search term
+  useEffect(() => {
+    const fetchFiles = async () => {
+      try {
+        setIsLoading(true);
+        setFetchError(null);
+        // Explicitly request only public files for marketplace
+        const result = await listFiles({ publicOnly: true });
+        console.log('Marketplace loaded files:', result.length, 'files');
+        setFiles(result);
+      } catch (err: any) {
+        console.error('Failed to load marketplace files:', err);
+        setFetchError(err.message || 'Failed to load marketplace files.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchFiles();
+    
+    // Refresh marketplace every 30 seconds to show newly uploaded files
+    const interval = setInterval(fetchFiles, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   const filteredBlobs = useMemo(() => {
-    if (!searchTerm.trim()) return mockDataBlobs;
+    if (!searchTerm.trim()) return files;
     
     const term = searchTerm.toLowerCase();
-    return mockDataBlobs.filter(
+    return files.filter(
       (blob) =>
         blob.filename.toLowerCase().includes(term) ||
         blob.ownerAddress.toLowerCase().includes(term) ||
         (blob.keyId && blob.keyId.toLowerCase().includes(term))
     );
-  }, [searchTerm]);
+  }, [searchTerm, files]);
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-white via-gray-50 to-stone-50">
@@ -374,17 +392,25 @@ export default function MarketplacePage() {
           </div>
 
           {/* Results count */}
-          {searchTerm && (
+          {!isLoading && !fetchError && (
             <div className="mb-6 text-sm text-stone-600">
-              Found {filteredBlobs.length} {filteredBlobs.length === 1 ? 'result' : 'results'}
+              Showing {filteredBlobs.length} {filteredBlobs.length === 1 ? 'file' : 'files'}
+            </div>
+          )}
+
+          {fetchError && (
+            <div className="glass-card p-6 mb-8 text-red-700 bg-red-50 border border-red-200">
+              {fetchError}
             </div>
           )}
 
           {/* Data Cards Grid */}
-          {filteredBlobs.length > 0 ? (
+          {isLoading ? (
+            <div className="glass-card p-12 text-center text-stone-600">Loading marketplace data...</div>
+          ) : filteredBlobs.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredBlobs.map((blob, index) => (
-                <DataCard key={`${blob.filename}-${index}`} blob={blob} />
+              {filteredBlobs.map((blob) => (
+                <DataCard key={blob.fileId} blob={blob} />
               ))}
             </div>
           ) : (
@@ -402,9 +428,9 @@ export default function MarketplacePage() {
                   d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-              <h3 className="text-xl font-semibold text-stone-900 mb-2">No results found</h3>
+              <h3 className="text-xl font-semibold text-stone-900 mb-2">No files found</h3>
               <p className="text-stone-600">
-                Try adjusting your search terms or browse all available data blobs.
+                Try adjusting your search terms or upload public files from the My Vault page.
               </p>
             </div>
           )}
