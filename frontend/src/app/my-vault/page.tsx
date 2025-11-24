@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar';
 import UploadModal from '../components/UploadModal';
 import { encryptWithSeal, createFileId, decryptWithBackupKey } from '@/lib/seal';
 import { uploadFile, getFile, fetchBlob } from '@/lib/api';
+import { useWalletAddress, useIsWalletConnected, useSendPayment } from '@/lib/wallet';
 
 // Type definition for Data Blob
 interface DataBlob {
@@ -82,6 +83,10 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [paymentInfo, setPaymentInfo] = useState<any>(null);
+  const [isPaying, setIsPaying] = useState(false);
+  const walletAddress = useWalletAddress();
+  const isWalletConnected = useIsWalletConnected();
+  const sendPayment = useSendPayment();
 
   const handleDownload = async (txDigest?: string) => {
     if (!blob.fileId) {
@@ -113,12 +118,20 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
           
           // 3. Get necessary info for decryption
           const packageId = process.env.NEXT_PUBLIC_SEAL_PACKAGE_ID;
-          if (!packageId) {
-            throw new Error('Seal package ID not configured');
+          if (!packageId || packageId.includes('YOUR_SEAL_PACKAGE_ID') || packageId.includes('0xYOUR')) {
+            throw new Error('Seal package ID not configured. Please set NEXT_PUBLIC_SEAL_PACKAGE_ID in your .env.local file.');
           }
           
-          // TODO: Get actual buyer address from wallet
-          const buyerAddress = '0x1ebda9acfd4a9c4cd9615b18e59315b048e6e876a0fafdbf251a960215f6727f';
+          // Validate format
+          if (!/^0x[a-fA-F0-9]{64}$/.test(packageId)) {
+            throw new Error(`Invalid Seal Package ID format: ${packageId}. Must be a valid Sui object ID.`);
+          }
+          
+          // Get buyer address from wallet
+          if (!walletAddress) {
+            throw new Error('Wallet not connected. Please connect your wallet to download encrypted files.');
+          }
+          const buyerAddress = walletAddress;
           
           // Create file ID (we'll use the filename + timestamp from metadata)
           const fileId = createFileId(`${response.fileMetadata.filename}-${response.fileMetadata.createdAt}`);
@@ -161,33 +174,56 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
         const paymentData = error.data;
         setPaymentInfo(paymentData);
         
-        // For now, show payment instructions
-        // TODO: Integrate wallet to make payment automatically
-        const proceed = confirm(
-          `Payment Required\n\n` +
-          `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
-          `Pay to: ${paymentData.pay_to}\n` +
-          `Network: ${paymentData.network}\n\n` +
-          `After making the payment transaction, click OK to retry download.`
-        );
+        // Check if wallet is connected
+        if (!isWalletConnected || !walletAddress) {
+          const proceed = confirm(
+            `Payment Required\n\n` +
+            `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
+            `Pay to: ${paymentData.pay_to}\n` +
+            `Network: ${paymentData.network}\n\n` +
+            `Please connect your wallet to make the payment automatically.`
+          );
+          return;
+        }
         
-        if (proceed) {
-          // Prompt user to enter transaction digest after payment
-          const txDigest = prompt(
-            'Enter the transaction digest from your payment:',
-            ''
+        // Automatically make payment using wallet
+        try {
+          setIsPaying(true);
+          const amountMist = BigInt(paymentData.amount_raw);
+          
+          // Show confirmation dialog
+          const proceed = confirm(
+            `Payment Required\n\n` +
+            `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
+            `Pay to: ${paymentData.pay_to}\n` +
+            `Network: ${paymentData.network}\n\n` +
+            `Click OK to approve the payment transaction in your wallet.`
           );
           
-          if (txDigest) {
-            // Retry with payment
-            await handleDownload(txDigest);
+          if (!proceed) {
+            setIsPaying(false);
+            return;
           }
+          
+          // Send payment transaction
+          const txDigest = await sendPayment(paymentData.pay_to, amountMist);
+          
+          // Wait a moment for transaction to be processed
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Retry download with payment proof
+          await handleDownload(txDigest);
+        } catch (paymentError: any) {
+          console.error('Payment error:', paymentError);
+          setDownloadError(`Payment failed: ${paymentError.message || 'Unknown error'}`);
+          setIsPaying(false);
         }
       } else {
         setDownloadError(error.message || 'Download failed');
       }
     } finally {
       setIsDownloading(false);
+      setIsPaying(false);
     }
   };
 
@@ -255,10 +291,18 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
       <div className="flex gap-2 mt-4">
         <button 
           onClick={() => handleDownload()}
-          disabled={isDownloading || !blob.fileId}
+          disabled={isDownloading || isPaying || !blob.fileId}
           className="flex-1 px-4 py-2.5 bg-stone-900 text-white rounded-lg font-medium hover:bg-stone-800 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {isDownloading ? (
+          {isPaying ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Processing Payment...
+            </span>
+          ) : isDownloading ? (
             <span className="flex items-center justify-center gap-2">
               <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -297,6 +341,8 @@ export default function MyVaultPage() {
   const [myBlobs, setMyBlobs] = useState<DataBlob[]>(mockMyBlobs);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const walletAddress = useWalletAddress();
+  const isWalletConnected = useIsWalletConnected();
 
   // Handle file upload with real backend integration
   const handleUpload = async (data: {
@@ -309,9 +355,11 @@ export default function MyVaultPage() {
     setUploadError(null);
 
     try {
-      // TODO: Get actual owner address from wallet connection
-      // For now, using a placeholder - you'll need to integrate wallet
-      const ownerAddress = '0x1ebda9acfd4a9c4cd9615b18e59315b048e6e876a0fafdbf251a960215f6727f';
+      // Get owner address from wallet
+      if (!walletAddress) {
+        throw new Error('Please connect your wallet to upload files. Click "Connect Wallet" in the navbar.');
+      }
+      const ownerAddress = walletAddress;
 
       // Read file as ArrayBuffer
       const fileBuffer = await data.file.arrayBuffer();
@@ -323,8 +371,13 @@ export default function MyVaultPage() {
       // If encryption is enabled, encrypt with Seal SDK
       if (data.isEncrypted) {
         const packageId = process.env.NEXT_PUBLIC_SEAL_PACKAGE_ID;
-        if (!packageId) {
-          throw new Error('Seal package ID not configured. Set NEXT_PUBLIC_SEAL_PACKAGE_ID');
+        if (!packageId || packageId.includes('YOUR_SEAL_PACKAGE_ID') || packageId.includes('0xYOUR')) {
+          throw new Error('Seal encryption is enabled but Seal Package ID is not configured. Please set NEXT_PUBLIC_SEAL_PACKAGE_ID in your .env.local file, or disable encryption for now.');
+        }
+
+        // Validate package ID format
+        if (!/^0x[a-fA-F0-9]{64}$/.test(packageId)) {
+          throw new Error(`Invalid Seal Package ID format: ${packageId}. Must be a valid Sui object ID (0x followed by 64 hex characters).`);
         }
 
         // Create a unique file ID
@@ -380,7 +433,14 @@ export default function MyVaultPage() {
       setIsUploadModalOpen(false);
     } catch (error: any) {
       console.error('Upload error:', error);
-      setUploadError(error.message || 'Upload failed. Please try again.');
+      let errorMessage = error.message || 'Upload failed. Please try again.';
+      
+      // Check for WAL token error and provide helpful message
+      if (errorMessage.includes('WAL_TOKENS_REQUIRED') || errorMessage.includes('WAL tokens')) {
+        errorMessage = 'WAL Tokens Required: The backend needs WAL testnet tokens to store files on Walrus. The Walrus CLI uses the Sui wallet in ~/.sui/sui_config/client.yaml. Please add WAL tokens to that wallet, or configure WALRUS_API_URL in backend .env to use HTTP API instead. See WAL_TOKENS_GUIDE.md for details.';
+      }
+      
+      setUploadError(errorMessage);
     } finally {
       setIsUploading(false);
     }

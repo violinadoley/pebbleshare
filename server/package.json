@@ -11,9 +11,10 @@
     "test:upload": "node scripts/test-upload.js"
   },
   "dependencies": {
+    "-": "^0.0.1",
     "@mysten/seal": "^0.9.4",
-    "@mysten/sui.js": "^0.54.1",
     "@mysten/sui": "^1.45.0",
+    "@mysten/sui.js": "^0.54.1",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
@@ -26,7 +27,7 @@
     "nanoid": "^4.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.0"
+    "nodemon": "^3.1.11"
   },
   "engines": {
     "node": ">=18.0.0"

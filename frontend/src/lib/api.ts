@@ -55,8 +55,16 @@ export async function uploadFile(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-    throw new Error(error.error || `Upload failed: ${response.statusText}`);
+    const error = await response.json().catch(() => ({ error: 'Upload failed', detail: 'Unknown error' }));
+    const errorMessage = error.error || `Upload failed: ${response.statusText}`;
+    const errorDetail = error.detail || '';
+    
+    // Check for WAL token error
+    if (errorMessage.includes('WAL_TOKENS_REQUIRED') || errorDetail.includes('WAL')) {
+      throw new Error('WAL_TOKENS_REQUIRED: Walrus storage requires WAL tokens. The backend Walrus CLI needs WAL testnet tokens in the Sui wallet configured at ~/.sui/sui_config/client.yaml. Please add WAL tokens to that wallet or configure WALRUS_API_URL in backend .env to use HTTP API instead.');
+    }
+    
+    throw new Error(errorMessage + (errorDetail ? `: ${errorDetail}` : ''));
   }
 
   return response.json();

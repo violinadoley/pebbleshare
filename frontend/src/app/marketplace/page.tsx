@@ -2,6 +2,9 @@
 
 import React, { useState, useMemo } from 'react';
 import Navbar from '../components/Navbar';
+import { useWalletAddress, useIsWalletConnected, useSendPayment } from '@/lib/wallet';
+import { getFile, fetchBlob } from '@/lib/api';
+import { createFileId, decryptWithBackupKey } from '@/lib/seal';
 
 // Type definition for Data Blob
 interface DataBlob {
@@ -13,6 +16,7 @@ interface DataBlob {
   walrus: object;
   originalSize: number;
   isPaywalled: boolean;
+  fileId?: string; // Sui object ID
 }
 
 // Mock data - simulating fetched data blobs
@@ -89,6 +93,120 @@ const truncateAddress = (address: string, start: number = 6, end: number = 4): s
 };
 
 const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
+  const [isPurchasing, setIsPurchasing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const walletAddress = useWalletAddress();
+  const isWalletConnected = useIsWalletConnected();
+  const sendPayment = useSendPayment();
+
+  const handlePurchase = async () => {
+    if (!blob.fileId) {
+      setError('File ID not available');
+      return;
+    }
+
+    if (!isWalletConnected || !walletAddress) {
+      alert('Please connect your wallet to purchase access to this file.');
+      return;
+    }
+
+    setIsPurchasing(true);
+    setError(null);
+
+    try {
+      // First, try to get the file (will return 402 if payment required)
+      let response;
+      try {
+        response = await getFile(blob.fileId);
+      } catch (error: any) {
+        if (error.type === 'payment_required') {
+          const paymentData = error.data;
+          
+          // Show confirmation
+          const proceed = confirm(
+            `Purchase Access\n\n` +
+            `File: ${blob.filename}\n` +
+            `Amount: ${paymentData.amount_raw / 1000000000} SUI\n` +
+            `Pay to: ${paymentData.pay_to}\n\n` +
+            `Click OK to approve the payment transaction in your wallet.`
+          );
+          
+          if (!proceed) {
+            setIsPurchasing(false);
+            return;
+          }
+          
+          // Make payment
+          const amountMist = BigInt(paymentData.amount_raw);
+          const txDigest = await sendPayment(paymentData.pay_to, amountMist);
+          
+          // Wait for transaction to be processed
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Retry with payment proof
+          const base64Digest = btoa(txDigest);
+          response = await getFile(blob.fileId, base64Digest);
+        } else {
+          throw error;
+        }
+      }
+      
+      // File access granted - handle download
+      if (response.method === 'seal_key_release' && response.encryptedKeyForBuyer && response.fileMetadata) {
+        // Encrypted file - fetch and decrypt
+        const packageId = process.env.NEXT_PUBLIC_SEAL_PACKAGE_ID;
+        if (!packageId || packageId.includes('YOUR_SEAL_PACKAGE_ID') || packageId.includes('0xYOUR')) {
+          throw new Error('Seal package ID not configured. Please set NEXT_PUBLIC_SEAL_PACKAGE_ID in your .env.local file.');
+        }
+        
+        // Validate format
+        if (!/^0x[a-fA-F0-9]{64}$/.test(packageId)) {
+          throw new Error(`Invalid Seal Package ID format: ${packageId}. Must be a valid Sui object ID.`);
+        }
+        
+        const blobData = await fetchBlob(response.fileMetadata.blobId);
+        const encryptedBytes = Uint8Array.from(
+          atob(blobData.data),
+          c => c.charCodeAt(0)
+        );
+        
+        const fileId = createFileId(`${response.fileMetadata.filename}-${response.fileMetadata.createdAt}`);
+        const decryptedBytes = await decryptWithBackupKey(
+          encryptedBytes,
+          fileId,
+          packageId,
+          response.encryptedKeyForBuyer,
+          walletAddress,
+          undefined // txDigest not needed for decryption in this case
+        );
+        
+        const decryptedBlob = new Blob([new Uint8Array(decryptedBytes)], {
+          type: blobData.contentType || 'application/octet-stream'
+        });
+        
+        const url = URL.createObjectURL(decryptedBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = response.fileMetadata.filename || blob.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        alert('File downloaded successfully!');
+      } else if (response.signedFetchUrl) {
+        // Direct download
+        window.open(response.signedFetchUrl, '_blank');
+        alert('File opened in new tab!');
+      }
+    } catch (err: any) {
+      console.error('Purchase error:', err);
+      setError(err.message || 'Purchase failed. Please try again.');
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
+
   return (
     <div className="glass-card p-6 hover:scale-[1.02] transition-all duration-300 cursor-pointer group">
       {/* Header with filename and paywall badge */}
@@ -137,9 +255,30 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
         )}
       </div>
 
+      {/* Error message */}
+      {error && (
+        <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+          {error}
+        </div>
+      )}
+
       {/* Action button */}
-      <button className="w-full mt-4 px-4 py-2.5 bg-stone-900 text-white rounded-lg font-medium hover:bg-stone-800 transition-colors text-sm">
-        {blob.isPaywalled ? 'Purchase Access' : 'View Details'}
+      <button 
+        onClick={handlePurchase}
+        disabled={isPurchasing || !blob.fileId}
+        className="w-full mt-4 px-4 py-2.5 bg-stone-900 text-white rounded-lg font-medium hover:bg-stone-800 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {isPurchasing ? (
+          <span className="flex items-center justify-center gap-2">
+            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Processing...
+          </span>
+        ) : (
+          blob.isPaywalled ? 'Purchase Access' : 'View Details'
+        )}
       </button>
     </div>
   );

@@ -15,8 +15,16 @@ const getSealClient = () => {
   const keyServer1 = process.env.NEXT_PUBLIC_SEAL_KEY_SERVER_1;
   const keyServer2 = process.env.NEXT_PUBLIC_SEAL_KEY_SERVER_2;
   
-  if (!keyServer1 || !keyServer2) {
-    throw new Error('Seal key servers not configured. Set NEXT_PUBLIC_SEAL_KEY_SERVER_1 and NEXT_PUBLIC_SEAL_KEY_SERVER_2');
+  // Validate key servers are configured and not placeholders
+  if (!keyServer1 || !keyServer2 || 
+      keyServer1.includes('YOUR_KEY_SERVER') || keyServer2.includes('YOUR_KEY_SERVER') ||
+      keyServer1.includes('0xYOUR') || keyServer2.includes('0xYOUR')) {
+    throw new Error('Seal key servers not configured. Please set NEXT_PUBLIC_SEAL_KEY_SERVER_1 and NEXT_PUBLIC_SEAL_KEY_SERVER_2 in your .env.local file with valid Sui object IDs.');
+  }
+  
+  // Validate format
+  if (!/^0x[a-fA-F0-9]{64}$/.test(keyServer1) || !/^0x[a-fA-F0-9]{64}$/.test(keyServer2)) {
+    throw new Error('Invalid Seal key server format. Must be valid Sui object IDs (0x followed by 64 hex characters).');
   }
   
   return new SealClient({

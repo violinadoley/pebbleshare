@@ -142,9 +142,19 @@ async function start() {
       });
     } catch (err) {
       console.error('Upload error:', err);
+      const errorMessage = err.message || 'Internal server error';
+      
+      // Check for WAL token error and provide helpful message
+      if (errorMessage.includes('WAL_TOKENS_REQUIRED') || errorMessage.includes('WAL')) {
+        return res.status(500).json({ 
+          error: 'wal_tokens_required', 
+          detail: errorMessage
+        });
+      }
+      
       return res.status(500).json({ 
         error: 'upload_failed', 
-        detail: err.message || 'Internal server error' 
+        detail: errorMessage
       });
     }
   });

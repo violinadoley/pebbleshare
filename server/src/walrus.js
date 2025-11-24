@@ -99,6 +99,20 @@ async function uploadCiphertextToWalrus(buffer, filename, epochs = 2) {
         throw new Error('Failed to parse blob ID from walrus output');
       }
     } catch (cliError) {
+      // Check for specific WAL token error
+      const errorOutput = (cliError.stderr?.toString() || cliError.message || '').toLowerCase();
+      const hasWalTokenError = errorOutput.includes('wal coins') || 
+                               errorOutput.includes('wal balance') ||
+                               errorOutput.includes('insufficient balance') ||
+                               errorOutput.includes('could not find wal');
+      
+      if (hasWalTokenError) {
+        console.error('Walrus CLI error: WAL tokens required');
+        const walError = new Error('WAL_TOKENS_REQUIRED: Walrus storage requires WAL tokens in your Sui wallet. The Walrus CLI is using the wallet configured in ~/.sui/sui_config/client.yaml. Please add WAL testnet tokens to that wallet or configure WALRUS_API_URL to use HTTP API instead.');
+        walError.code = 'WAL_TOKENS_REQUIRED';
+        throw walError;
+      }
+      
       // CLI not available or failed, fall back to HTTP API
       console.error('Walrus CLI error:', {
         message: cliError.message,
@@ -144,9 +158,16 @@ async function uploadCiphertextToWalrus(buffer, filename, epochs = 2) {
     }
 
     // No mock fallback - throw error if not configured
+    if (cliError && (cliError.message?.includes('WAL_TOKENS_REQUIRED') || cliError.code === 'WAL_TOKENS_REQUIRED')) {
+      throw cliError; // Re-throw WAL token error as-is
+    }
     throw new Error('Walrus integration not configured. Set WALRUS_API_URL or install walrus CLI.');
   } catch (err) {
     console.error('uploadCiphertextToWalrus error:', err);
+    // Preserve WAL token error message
+    if (err.message?.includes('WAL_TOKENS_REQUIRED') || err.code === 'WAL_TOKENS_REQUIRED') {
+      throw err;
+    }
     throw new Error(`Walrus upload failed: ${err.message}`);
   }
 }
