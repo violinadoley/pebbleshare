@@ -1,4 +1,4 @@
-import { SealClient, SessionKey } from '@mysten/seal';
+import { SealClient } from '@mysten/seal';
 import { SuiClient } from '@mysten/sui/client';
 
 // Initialize Sui client
@@ -85,12 +85,12 @@ export async function encryptWithSeal(
  */
 export async function decryptWithBackupKey(
   encryptedData: Uint8Array,
-  id: string,
-  packageId: string,
+  _id: string,
+  _packageId: string,
   backupKeyHex: string,
-  buyerAddress: string,
-  txDigest?: string,
-  signPersonalMessage?: (message: Uint8Array) => Promise<string>
+  _buyerAddress: string,
+  _txDigest?: string,
+  _signPersonalMessage?: (message: Uint8Array) => Promise<string>
 ): Promise<Uint8Array> {
   try {
     console.log('Starting backup key decryption...');

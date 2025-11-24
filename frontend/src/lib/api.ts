@@ -1,10 +1,24 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+export interface PaymentInfo {
+  payment_id: string;
+  amount_raw: number;
+  pay_to: string;
+  network: string;
+}
+
+export interface ApiError {
+  error: string;
+  detail?: string;
+  type?: string;
+  data?: PaymentInfo;
+}
+
 export interface UploadResponse {
   ok: boolean;
   fileId: string;
   blobId: string;
-  walrus?: any;
+  walrus?: Record<string, unknown>;
   keyId?: string | null;
   priceRaw: number;
   txDigest?: string;

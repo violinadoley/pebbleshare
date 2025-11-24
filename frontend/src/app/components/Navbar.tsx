@@ -7,7 +7,7 @@ import { useWalletAddress } from '@/lib/wallet';
 
 export default function Navbar() {
   const pathname = usePathname();
-  const { currentWallet } = useCurrentWallet();
+  useCurrentWallet();
   const { mutate: connectWallet } = useConnectWallet();
   const { mutate: disconnectWallet } = useDisconnectWallet();
   const wallets = useWallets();

@@ -88,7 +88,7 @@ export default function UploadModal({
       }
       onClose();
     }
-  }, [file, isPaywalled, price, isEncrypted, isUploading, uploadError, onUpload, onClose]);
+  }, [file, isPaywalled, price, isEncrypted, isPublic, isUploading, uploadError, onUpload, onClose]);
 
   const handleClose = useCallback(() => {
     setFile(null);

@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import Navbar from '../components/Navbar';
 import UploadModal from '../components/UploadModal';
 import { encryptWithSeal, createFileId, decryptWithBackupKey } from '@/lib/seal';
-import { uploadFile, getFile, fetchBlob, listFiles, ListedFile } from '@/lib/api';
+import { uploadFile, getFile, fetchBlob, listFiles, ListedFile, PaymentInfo, ApiError } from '@/lib/api';
 import { useWalletAddress, useIsWalletConnected, useSendPayment } from '@/lib/wallet';
 import { useSignPersonalMessage } from '@mysten/dapp-kit';
 
@@ -15,7 +15,7 @@ interface DataBlob {
   priceRaw: number;
   keyId: string | null;
   createdAt: string;
-  walrus?: { blobId: string; [key: string]: any };
+  walrus?: { blobId: string; [key: string]: unknown };
   originalSize: number;
   isPaywalled: boolean;
   fileId?: string; // Sui object ID
@@ -105,7 +105,7 @@ const mapListedFileToBlob = (file: ListedFile): DataBlob => ({
 const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [paymentInfo, setPaymentInfo] = useState<any>(null);
+  const [paymentInfo, setPaymentInfo] = useState<PaymentInfo | null>(null);
   const [isPaying, setIsPaying] = useState(false);
   const walletAddress = useWalletAddress();
   const isWalletConnected = useIsWalletConnected();
@@ -195,20 +195,23 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
           
-        } catch (decryptError: any) {
+        } catch (decryptError: unknown) {
           console.error('Decryption error:', decryptError);
-          setDownloadError(`Decryption failed: ${decryptError.message}`);
+          const errorMessage = decryptError instanceof Error ? decryptError.message : 'Unknown decryption error';
+          setDownloadError(`Decryption failed: ${errorMessage}`);
         }
       } else if (response.signedFetchUrl) {
         // Direct download from Walrus (non-encrypted)
         window.open(response.signedFetchUrl, '_blank');
       }
-    } catch (error: any) {
-      if (error.type === 'payment_required') {
-        setPaymentInfo(error.data);
+    } catch (error: unknown) {
+      if (error && typeof error === 'object' && 'type' in error && error.type === 'payment_required') {
+        const apiError = error as ApiError;
+        setPaymentInfo(apiError.data || null);
         setDownloadError(null);
       } else {
-        setDownloadError(error.message || 'Download failed');
+        const errorMessage = error instanceof Error ? error.message : 'Download failed';
+        setDownloadError(errorMessage);
       }
     } finally {
       setIsDownloading(false);
@@ -229,9 +232,10 @@ const MyVaultCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
       const txDigest = await sendPayment(paymentInfo.pay_to, amountMist);
       await new Promise((resolve) => setTimeout(resolve, 1500));
       await handleDownload(txDigest);
-    } catch (paymentError: any) {
+    } catch (paymentError: unknown) {
       console.error('Payment error:', paymentError);
-      setDownloadError(`Payment failed: ${paymentError.message || 'Unknown error'}`);
+      const errorMessage = paymentError instanceof Error ? paymentError.message : 'Unknown error';
+      setDownloadError(`Payment failed: ${errorMessage}`);
     } finally {
       setIsPaying(false);
     }
@@ -376,7 +380,6 @@ export default function MyVaultPage() {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const walletAddress = useWalletAddress();
-  const isWalletConnected = useIsWalletConnected();
 
   React.useEffect(() => {
     const fetchMyFiles = async () => {
@@ -390,8 +393,9 @@ export default function MyVaultPage() {
         const result = await listFiles({ publicOnly: false, ownerAddress: walletAddress });
         const mapped = result.map(mapListedFileToBlob);
         setMyBlobs(mapped); // Show real files only, no mock data fallback
-      } catch (err: any) {
-        setFetchError(err.message || 'Failed to load your files.');
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load your files.';
+        setFetchError(errorMessage);
       } finally {
         setIsLoadingFiles(false);
       }
@@ -490,9 +494,9 @@ export default function MyVaultPage() {
 
       // Close modal
       setIsUploadModalOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Upload error:', error);
-      let errorMessage = error.message || 'Upload failed. Please try again.';
+      let errorMessage = error instanceof Error ? error.message : 'Upload failed. Please try again.';
       
       // Check for WAL token error and provide helpful message
       if (errorMessage.includes('WAL_TOKENS_REQUIRED') || errorMessage.includes('WAL tokens')) {

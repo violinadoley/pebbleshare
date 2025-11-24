@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import { useWalletAddress, useIsWalletConnected, useSendPayment } from '@/lib/wallet';
 import { useSignPersonalMessage } from '@mysten/dapp-kit';
-import { getFile, fetchBlob, listFiles, ListedFile } from '@/lib/api';
+import { getFile, fetchBlob, listFiles, ListedFile, PaymentInfo, ApiError } from '@/lib/api';
 import { createFileId, decryptWithBackupKey } from '@/lib/seal';
 
 type DataBlob = ListedFile;
@@ -42,7 +42,7 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paymentInfo, setPaymentInfo] = useState<any>(null);
+  const [paymentInfo, setPaymentInfo] = useState<PaymentInfo | null>(null);
   const walletAddress = useWalletAddress();
   const isWalletConnected = useIsWalletConnected();
   const sendPayment = useSendPayment();
@@ -74,7 +74,7 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
       // First, try to get the file (will return 402 if payment required)
       const base64Digest = txDigest ? btoa(txDigest) : undefined;
       // For marketplace purchases, DON'T send buyerAddress to force x402 payment even for owners
-      let response = await getFile(blob.fileId, {
+      const response = await getFile(blob.fileId, {
         paymentTxDigest: base64Digest,
         // buyerAddress intentionally omitted to enforce x402 payment
       });
@@ -126,13 +126,15 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
         // Direct download
         window.open(response.signedFetchUrl, '_blank');
       }
-    } catch (err: any) {
-      if (err.type === 'payment_required') {
-        setPaymentInfo(err.data);
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'type' in err && err.type === 'payment_required') {
+        const apiError = err as ApiError;
+        setPaymentInfo(apiError.data || null);
         setError(null);
       } else {
         console.error('Purchase error:', err);
-        setError(err.message || 'Purchase failed. Please try again.');
+        const errorMessage = err instanceof Error ? err.message : 'Purchase failed. Please try again.';
+        setError(errorMessage);
       }
     } finally {
       setIsPurchasing(false);
@@ -153,9 +155,10 @@ const DataCard: React.FC<{ blob: DataBlob }> = ({ blob }) => {
       const txDigest = await sendPayment(paymentInfo.pay_to, amountMist);
       await new Promise((resolve) => setTimeout(resolve, 1500));
       await handlePurchase(txDigest);
-    } catch (paymentError: any) {
+    } catch (paymentError: unknown) {
       console.error('Payment error:', paymentError);
-      setError(paymentError.message || 'Payment failed. Please try again.');
+      const errorMessage = paymentError instanceof Error ? paymentError.message : 'Payment failed. Please try again.';
+      setError(errorMessage);
     } finally {
       setIsPaying(false);
     }
@@ -291,9 +294,10 @@ export default function MarketplacePage() {
         const result = await listFiles({ publicOnly: true });
         console.log('Marketplace loaded files:', result.length, 'files');
         setFiles(result);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Failed to load marketplace files:', err);
-        setFetchError(err.message || 'Failed to load marketplace files.');
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load marketplace files.';
+        setFetchError(errorMessage);
       } finally {
         setIsLoading(false);
       }
