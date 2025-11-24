@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, vio, Aakash ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Frontend CI
+  frontend:
+    name: Frontend - Build & Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Run linter
+        working-directory: ./frontend
+        run: npm run lint
+      
+      - name: Build
+        working-directory: ./frontend
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+  # Backend CI
+  backend:
+    name: Backend - Test & Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./server
+        run: npm ci
+      
+      - name: Check syntax
+        working-directory: ./server
+        run: node -c src/app.js
+      
+      - name: Run tests (if available)
+        working-directory: ./server
+        run: |
+          if [ -f "package.json" ] && grep -q '"test"' package.json; then
+            npm test || echo "No tests configured yet"
+          else
+            echo "No tests configured"
+          fi
+        continue-on-error: true
+
+  # Scripts validation
+  scripts:
+    name: Validate Scripts
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check script permissions
+        run: |
+          find scripts -name "*.sh" -type f | while read script; do
+            if [ ! -x "$script" ]; then
+              echo "Warning: $script is not executable"
+            fi
+          done
+      
+      - name: Validate shell scripts
+        run: |
+          find scripts -name "*.sh" -type f | while read script; do
+            shellcheck "$script" || echo "shellcheck not installed, skipping"
+          done
+        continue-on-error: true

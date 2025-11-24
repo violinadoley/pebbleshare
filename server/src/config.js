@@ -15,10 +15,17 @@ module.exports = {
     apiKey: process.env.WALRUS_API_KEY
   },
   seal: {
-    apiUrl: process.env.SEAL_API_URL,
-    apiKey: process.env.SEAL_API_KEY
+    packageId: process.env.SEAL_PACKAGE_ID,
+    keyServers: [
+      process.env.SEAL_KEY_SERVER_1,
+      process.env.SEAL_KEY_SERVER_2
+    ].filter(Boolean),
+    threshold: 2,
+    verifyKeyServers: process.env.NODE_ENV === 'production'
+  },
+  fileRegistry: {
+    packageId: process.env.FILE_REGISTRY_PACKAGE_ID,
   },
   dbFile: process.env.DB_FILE || './data/db.json',
   nodeEnv: process.env.NODE_ENV || 'development'
 };
-

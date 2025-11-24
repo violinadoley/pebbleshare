@@ -1,6 +1,13 @@
+import Navbar from "./components/Navbar";
+
 export default function Home() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-white via-gray-50 to-stone-50">
+      {/* Navigation */}
+      <div className="relative z-50">
+        <Navbar />
+      </div>
+
       {/* Hero Section */}
       <section className="relative min-h-screen flex items-center justify-center px-6 py-20 overflow-hidden">
         {/* Background decorative elements */}
@@ -11,23 +18,6 @@ export default function Home() {
         </div>
 
         <div className="relative z-10 max-w-6xl w-full">
-          {/* Navigation */}
-          <nav className="mb-20">
-            <div className="glass-card px-6 py-4 flex items-center justify-between">
-              <div className="text-xl font-semibold tracking-tight">PebbleShare</div>
-              <div className="flex gap-4">
-                <button className="px-4 py-2 text-sm font-medium hover:opacity-70 transition-opacity">
-                  Features
-                </button>
-                <button className="px-4 py-2 text-sm font-medium hover:opacity-70 transition-opacity">
-                  How it works
-                </button>
-                <button className="px-6 py-2 text-sm font-medium bg-stone-900 text-white rounded-full hover:bg-stone-800 transition-colors">
-                  Get Started
-                </button>
-              </div>
-            </div>
-          </nav>
 
           {/* Hero Content */}
           <div className="text-center mb-16">

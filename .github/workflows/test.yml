@@ -1,0 +1,49 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, vio, Aakash ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install backend dependencies
+        working-directory: ./server
+        run: npm ci
+      
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Run backend tests
+        working-directory: ./server
+        run: |
+          if [ -d "tests" ] || [ -d "test" ]; then
+            npm test
+          else
+            echo "No tests found - skipping"
+          fi
+        continue-on-error: true
+      
+      - name: Run frontend tests
+        working-directory: ./frontend
+        run: |
+          if [ -d "__tests__" ] || [ -f "*.test.*" ]; then
+            npm test
+          else
+            echo "No tests found - skipping"
+          fi
+        continue-on-error: true

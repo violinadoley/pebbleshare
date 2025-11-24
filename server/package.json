@@ -6,23 +6,30 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "test": "node scripts/test-pay.sh"
+    "test": "node scripts/test-pay.sh",
+    "test:seal": "node scripts/test-seal.js",
+    "test:upload": "node scripts/test-upload.js"
   },
   "dependencies": {
-    "@mysten/sui.js": "^1.0.0",
+    "-": "^0.0.1",
+    "@mysten/seal": "^0.9.4",
+    "@mysten/sui": "^1.45.0",
+    "@mysten/sui.js": "^0.54.1",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "express-rate-limit": "^8.2.1",
     "form-data": "^4.0.0",
+    "helmet": "^8.1.0",
     "lowdb": "^5.0.4",
     "nanoid": "^4.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.0"
+    "nodemon": "^3.1.11"
   },
   "engines": {
     "node": ">=18.0.0"
   }
 }
-

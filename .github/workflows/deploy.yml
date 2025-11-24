@@ -1,0 +1,44 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Build Frontend
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          NODE_ENV: production
+      
+      - name: Build Backend
+        working-directory: ./server
+        run: npm ci
+      
+      - name: Deploy (Add your deployment steps here)
+        run: |
+          echo "Add your deployment commands here"
+          # Examples:
+          # - Deploy to Vercel (frontend)
+          # - Deploy to Railway/Render (backend)
+          # - Deploy to your own server via SSH
+          # When ready, add environment variables like:
+          # env:
+          #   DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
